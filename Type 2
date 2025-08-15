@@ -1,0 +1,86 @@
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@adiwajshing/baileys";
+import qrcode from "qrcode-terminal";
+import fs from "fs";
+import fetch from "node-fetch";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const prefix = process.env.PREFIX || ".";
+const owner = process.env.OWNER || "225070000000";
+const botName = process.env.BOT_NAME || "Bot";
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState("auth");
+    const { version } = await fetchLatestBaileysVersion();
+
+    const sock = makeWASocket({
+        version,
+        printQRInTerminal: true,
+        auth: state
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message) return;
+
+        const from = msg.key.remoteJid;
+        const type = Object.keys(msg.message)[0];
+        const body = type === "conversation" ? msg.message.conversation : (type === "extendedTextMessage" ? msg.message.extendedTextMessage.text : "");
+        if (!body.startsWith(prefix)) return;
+
+        const args = body.slice(prefix.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
+
+        console.log(`[COMMAND] ${command} from ${from}`);
+
+        if (command === "menu") {
+            const menuText = `
+╭───「 ${botName} 」
+│ Owner: ${owner}
+│ Prefix: ${prefix}
+╰────────────────
+📌 Commandes disponibles :
+${prefix}menu - Voir ce menu
+${prefix}sticker - Créer un sticker
+${prefix}ping - Vérifier la latence
+${prefix}wiki <recherche> - Wikipédia
+${prefix}ytmp3 <url> - Télécharger audio YouTube
+            `;
+            await sock.sendMessage(from, { text: menuText });
+        }
+
+        if (command === "ping") {
+            await sock.sendMessage(from, { text: "🏓 Pong!" });
+        }
+
+        if (command === "wiki") {
+            if (!args[0]) return sock.sendMessage(from, { text: "Usage: .wiki <recherche>" });
+            const query = args.join(" ");
+            const res = await fetch(`https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`);
+            const data = await res.json();
+            if (data.extract) {
+                await sock.sendMessage(from, { text: `📚 ${data.title}\n\n${data.extract}` });
+            } else {
+                await sock.sendMessage(from, { text: "Aucun résultat trouvé." });
+            }
+        }
+
+        if (command === "sticker") {
+            if (!msg.message.imageMessage) return sock.sendMessage(from, { text: "Envoie une image avec la commande." });
+            const buffer = await sock.downloadMediaMessage(msg);
+            fs.writeFileSync("sticker.webp", buffer);
+            await sock.sendMessage(from, { sticker: fs.readFileSync("sticker.webp") });
+        }
+
+        if (command === "ytmp3") {
+            if (!args[0]) return sock.sendMessage(from, { text: "Usage: .ytmp3 <url>" });
+            await sock.sendMessage(from, { text: "⏳ Téléchargement en cours..." });
+            await sock.sendMessage(from, { text: "⚠️ Cette fonctionnalité doit être connectée à une API externe." });
+        }
+    });
+}
+
+startBot();
